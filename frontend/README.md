@@ -1,4 +1,4 @@
-# autopsy.ai — Forensics Studio Frontend
+# Autopsy.ai — Forensics Studio Frontend
 
 The frontend interface for **autopsy.ai** is built with **Next.js 14 (App Router)**, **TypeScript**, and **Tailwind CSS**.
 
