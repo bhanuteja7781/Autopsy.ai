@@ -1,4 +1,4 @@
-# autopsy.ai — Backend Engine & API Gateway
+# Autopsy.ai — Backend Engine & API Gateway
 
 The backend service for **autopsy.ai** is built on FastAPI and implements the **Deep Policy Reasoning (DPR v2.0)** pipeline.
 
