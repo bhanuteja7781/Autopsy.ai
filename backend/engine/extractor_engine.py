@@ -131,8 +131,8 @@ class ExtractorEngine:
     async def extract_documents(
         self, documents: list[tuple[str, str, Optional[str]]], entity_name: str
     ) -> list[GroundedClaim]:
-        """Extract documents with bounded concurrency, persisting claims serially for SQLite safety."""
-        semaphore = asyncio.Semaphore(2)
+        """Extract documents with high concurrency (8 parallel workers), persisting claims serially for SQLite safety."""
+        semaphore = asyncio.Semaphore(8)
 
         async def _safe_extract(doc_id: str, text: str, pub_date: Optional[str]) -> list[GroundedClaim]:
             async with semaphore:
