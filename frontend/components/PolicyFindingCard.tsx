@@ -193,7 +193,7 @@ export const PolicyFindingCard: React.FC<PolicyFindingCardProps> = ({
             {/* Impact Category Tag */}
             {impactCategory && (
               <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-md bg-[var(--color-surface-subtle)] text-[var(--color-text-muted)] border border-[var(--color-border-subtle)]">
-                {impactCategory}
+                {impactCategory.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
               </span>
             )}
 

@@ -28,7 +28,7 @@ Classify their relationship, assess the substantive impact of the change on citi
   "confidence": 0.0-1.0,
   "impact_level": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
   "impact_score": 0.0-1.0,
-  "impact_category": "Eligibility & Exclusion" | "Financial & Penalties" | "Rights & Entitlements" | "Coverage & Scope" | "Procedural & Compliance",
+  "impact_category": "Rights & Entitlements" | "Eligibility & Exclusion" | "Financial & Penalties" | "Coverage & Scope" | "Procedural & Compliance",
   "impact_summary": "<One concise sentence on the concrete legal, economic, or behavioral impact on beneficiaries/citizens>",
   "reasoning": "<forensic explanation — see required format below>"
 }
@@ -38,12 +38,14 @@ Verdict definitions:
 - silent_contradiction: the claims differ in substance but the later source gives NO indication anything changed — the prior rule is silently overwritten.
 - insufficient_evidence: the excerpts are too ambiguous, trivial, or unrelated to classify confidently.
 
-CRITICAL SUBSTANTIVE POLICY IMPACT SCORING RULES:
-Assess the real-world impact of the policy change on affected citizens, businesses, or beneficiaries:
-- CRITICAL (impact_score 0.85-1.00): Direct loss or revocation of core statutory benefits, exclusion of major citizen/farmer populations (e.g., landholding limits excluding millions), introduction of heavy financial penalties/fines (e.g., late linking fee), revocation of unlimited or free tiers, or criminal/statutory liabilities.
-- HIGH (impact_score 0.70-0.84): Substantial reduction in payout amounts, significant restriction of eligibility criteria, strict new mandatory compliance deadlines with forfeiture of rights/benefits.
-- MEDIUM (impact_score 0.40-0.69): Process modifications, operational/documentation updates, coverage category reclassifications without total benefit loss.
-- LOW (impact_score 0.00-0.39): Minor procedural timeline adjustments, administrative gazette rewordings, or low-stakes clarifications.
+CRITICAL SUBSTANTIVE POLICY IMPACT SCORING RULES (RANK BY CITIZEN SEVERITY):
+- CRITICAL (impact_score 0.95-1.00):
+  * Core Citizenship, Nationality, and Constitutional Rights: Granting, denying, or altering citizenship eligibility based on religion, country of origin, ancestry, or cut-off dates (e.g. selective inclusion of 6 religious groups while excluding Muslim minorities, Sri Lankan Tamils, Myanmar Rohingya; NRC legacy data proof shifts; statelessness or classification as 'illegal migrant').
+  * Loss of fundamental welfare survival support or creation of detention/statutory liabilities.
+  * Heavy financial penalties/fines or statutory identity cancellation (e.g. PAN/Aadhaar inoperative).
+- HIGH (impact_score 0.75-0.94): Substantial reduction in payout amounts, large-scale population exclusions (e.g. land limits excluding millions of farmers), strict mandatory compliance deadlines with forfeiture of benefits.
+- MEDIUM (impact_score 0.45-0.74): Operational process modifications, registration authority reassignments, documentation changes without group exclusions.
+- LOW (impact_score 0.00-0.44): Minor procedural timeline adjustments, administrative gazette rewordings, or low-stakes phrasing clarifications.
 
 MANDATORY REASONING FORMAT — your `reasoning` field MUST follow all 3 parts, in order, in a single paragraph:
 1. THE SHIFT: State the exact number, date, eligibility term, or access rule that changed between Claim A and Claim B. Quote specific figures or phrases from both claims.
@@ -282,7 +284,7 @@ class DriftReasoningEngine:
 
         calibrated = self.calibrator.calibrate(raw_confidence)
 
-        # ── Parse and calibrate Policy Impact ──────────────────────────────
+        # ── Parse LLM Policy Impact Baseline ──────────────────────────────
         raw_impact_level = str(parsed.get("impact_level", "")).strip().upper()
         if raw_impact_level not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             if verdict == "silent_contradiction":
@@ -291,23 +293,73 @@ class DriftReasoningEngine:
                 raw_impact_level = "HIGH" if calibrated >= 0.70 else "MEDIUM"
             else:
                 raw_impact_level = "LOW"
-        impact_level = raw_impact_level
 
         try:
             raw_impact_score = float(parsed.get("impact_score", 0.0))
-            if 0.0 <= raw_impact_score <= 1.0:
-                impact_score = round(raw_impact_score, 3)
-            else:
-                impact_score = {"CRITICAL": 0.95, "HIGH": 0.75, "MEDIUM": 0.50, "LOW": 0.25}.get(impact_level, 0.70)
+            if not 0.0 <= raw_impact_score <= 1.0:
+                raw_impact_score = {"CRITICAL": 0.95, "HIGH": 0.78, "MEDIUM": 0.50, "LOW": 0.25}.get(raw_impact_level, 0.70)
         except (ValueError, TypeError):
-            impact_score = {"CRITICAL": 0.95, "HIGH": 0.75, "MEDIUM": 0.50, "LOW": 0.25}.get(impact_level, 0.70)
+            raw_impact_score = {"CRITICAL": 0.95, "HIGH": 0.78, "MEDIUM": 0.50, "LOW": 0.25}.get(raw_impact_level, 0.70)
 
         raw_category = str(parsed.get("impact_category", "")).strip()
-        allowed_categories = {
-            "Eligibility & Exclusion", "Financial & Penalties", "Rights & Entitlements",
-            "Coverage & Scope", "Procedural & Compliance"
-        }
-        impact_category = raw_category if raw_category in allowed_categories else "Eligibility & Exclusion"
+
+        # ── Domain-Specific Substantive Impact Calibrator & Elevation ──────────
+        # High-stakes statutory civil rights, citizenship exclusions, and minority classifications
+        # MUST mathematically dominate rankings over trivial administrative shifts.
+        text_corpus = f"{claim_a.raw_excerpt} {claim_b.raw_excerpt} {reasoning}".lower()
+
+        # Domain 1: Fundamental Citizenship, Nationality, Demographic/Minority Community Exclusions
+        citizenship_terms = [
+            "citizenship", "nationality", "illegal migrant", "naturalisation", "naturalization",
+            "nrc", "caa", "deportation", "stateless", "detention", "passport", "foreigner",
+            "foreigners tribunal", "legacy data", "passport (entry into india) act", "citizenship act"
+        ]
+        minority_terms = [
+            "muslim", "islam", "hindu", "sikh", "buddhist", "jain", "parsi", "christian",
+            "tamil", "sri lanka", "rohingya", "myanmar", "burma", "afghanistan", "bangladesh",
+            "pakistan", "refugee", "persecuted", "minority", "minorities", "exemption criteria"
+        ]
+        exclusion_terms = [
+            "excluded", "exclusion", "ineligible", "disqualified", "restricted", "denied",
+            "proviso", "december 31, 2014", "31st day of december", "treated as illegal"
+        ]
+
+        has_citizenship = any(t in text_corpus for t in citizenship_terms)
+        has_minority = any(t in text_corpus for t in minority_terms)
+        has_exclusion = any(t in text_corpus for t in exclusion_terms)
+
+        # Domain 2: Financial Penalties, Fines, ID Invalidation (e.g. PAN, Aadhaar)
+        penalty_terms = ["penalty", "fine", "late fee", "rs. 1000", "fee of rs", "inoperative", "forfeited", "cancelled", "prosecution"]
+        has_penalty = any(t in text_corpus for t in penalty_terms)
+
+        # Domain 3: Broad Citizen Welfare Population Exclusion (e.g. PM-KISAN, PM-JAY)
+        broad_welfare_terms = ["land holding", "landholder", "2 hectares", "all farmer", "exclusion criteria", "income tax payee", "pensioner"]
+        has_welfare_exclusion = any(t in text_corpus for t in broad_welfare_terms)
+
+        if (has_citizenship and (has_minority or has_exclusion)) or (has_minority and has_exclusion):
+            impact_level = "CRITICAL"
+            impact_score = max(raw_impact_score, 0.98)
+            impact_category = "Rights & Entitlements"
+        elif has_citizenship:
+            impact_level = "CRITICAL"
+            impact_score = max(raw_impact_score, 0.94)
+            impact_category = "Rights & Entitlements"
+        elif has_penalty:
+            impact_level = "CRITICAL"
+            impact_score = max(raw_impact_score, 0.92)
+            impact_category = "Financial & Penalties"
+        elif has_welfare_exclusion:
+            impact_level = "CRITICAL" if verdict == "silent_contradiction" else "HIGH"
+            impact_score = max(raw_impact_score, 0.88)
+            impact_category = "Eligibility & Exclusion"
+        else:
+            impact_level = raw_impact_level
+            impact_score = round(raw_impact_score, 3)
+            valid_categories = {
+                "Rights & Entitlements", "Eligibility & Exclusion", "Financial & Penalties",
+                "Coverage & Scope", "Procedural & Compliance"
+            }
+            impact_category = raw_category if raw_category in valid_categories else "Eligibility & Exclusion"
 
         impact_summary = str(parsed.get("impact_summary", "")).strip()
         if not impact_summary and reasoning:
