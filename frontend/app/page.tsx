@@ -339,19 +339,25 @@ export default function Home() {
     }
   };
 
-  // Separate actionable findings from noise and sort by priority & confidence
+  // Separate actionable findings from noise and sort by policy impact severity & confidence
   const actionable = comparisons
     .filter((c) => c.verdict === 'silent_contradiction' || c.verdict === 'explicit_update')
     .sort((a, b) => {
-      // 1. Silent contradictions first
-      if (a.verdict === 'silent_contradiction' && b.verdict !== 'silent_contradiction') return -1;
-      if (b.verdict === 'silent_contradiction' && a.verdict !== 'silent_contradiction') return 1;
-      // 2. Highest confidence first
+      // 1. Sort by computed priority rank (policy impact severity 60% + verdict 25% + confidence 15%)
+      const rankA = a.priorityRank ?? ((a.impactScore ?? 0.75) * 0.60 + (a.verdict === 'silent_contradiction' ? 0.25 : 0.15) + (a.confidence ?? 0.8) * 0.15);
+      const rankB = b.priorityRank ?? ((b.impactScore ?? 0.75) * 0.60 + (b.verdict === 'silent_contradiction' ? 0.25 : 0.15) + (b.confidence ?? 0.8) * 0.15);
+      if (Math.abs(rankB - rankA) > 0.001) {
+        return rankB - rankA;
+      }
+      // 2. Highest confidence fallback
       return (b.confidence || 0) - (a.confidence || 0);
     });
 
   const INITIAL_VISIBLE_COUNT = 2;
   const displayedFindings = showAllFindings ? actionable : actionable.slice(0, INITIAL_VISIBLE_COUNT);
+  const criticalImpactCount = comparisons.filter(
+    (c) => (c.impactLevel || '').toUpperCase() === 'CRITICAL' || (c.impactScore || 0) >= 0.85
+  ).length;
   const silentReversals = comparisons.filter((c) => c.verdict === 'silent_contradiction');
   const explicitUpdates = comparisons.filter((c) => c.verdict === 'explicit_update');
   const consistentCount = comparisons.filter((c) => c.verdict === 'consistent').length;
@@ -459,15 +465,15 @@ export default function Home() {
         <section className="text-center space-y-2.5 pt-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-medium bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] border border-[var(--color-accent-border)] mb-1">
             <span>Dual-Model Forensics:</span>
-            <span className="font-semibold">DeepSeek-V3</span>
+            <span className="font-semibold">Gemini 3.6 Flash</span>
             <span>+</span>
-            <span className="font-semibold">Gemma-3-27B</span>
+            <span className="font-semibold">OpenRouter (GPT-4o-mini)</span>
           </div>
           <h1 className="text-2xl sm:text-4xl font-bold tracking-tight text-[var(--color-text-primary)] font-serif">
             Has a policy quietly changed?
           </h1>
           <p className="text-sm sm:text-base text-[var(--color-text-secondary)] max-w-xl mx-auto leading-relaxed">
-            Detect unannounced rule reversals, benefit caps, and eligibility shifts across years of public notices.
+            Detect unannounced rule reversals, benefit caps, and eligibility shifts across years of public notices, prioritized by policy impact.
           </p>
         </section>
 
@@ -544,12 +550,12 @@ export default function Home() {
                 'border-[var(--color-border)] opacity-50'
               }`}>
                 <span>3</span>
-                <span>Drift Analysis</span>
+                <span>Drift &amp; Impact Analysis</span>
               </div>
             </div>
 
             <p className="text-xs text-[var(--color-text-muted)] italic">
-              {loadingMessage || 'Cross-referencing historical statements...'}
+              {loadingMessage || 'Cross-referencing historical statements and assessing legal impact...'}
             </p>
           </section>
         )}
@@ -582,7 +588,7 @@ export default function Home() {
                   className="px-3.5 py-1.5 rounded-xl font-semibold text-xs text-white bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <RefreshCw size={12} />
-                  <span>Run Policy Audit</span>
+                  <span>Re-Audit Policy</span>
                 </button>
               </div>
 
@@ -640,7 +646,7 @@ export default function Home() {
                 </button>
               </div>
             ) : actionable.length === 0 ? (
-              /* Task 3: Zero contradictions/updates -> clean banner only if X > 0 documents analyzed */
+              /* Zero contradictions/updates -> clean banner only if X > 0 documents analyzed */
               <div
                 className="p-7 rounded-3xl border text-center space-y-2"
                 style={{
@@ -668,9 +674,14 @@ export default function Home() {
             ) : (
               /* Actionable findings exist */
               <div className="space-y-4">
-                {/* Findings header with consistent summary inline */}
+                {/* Findings header with impact & consistent summary inline */}
                 <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
+                    {criticalImpactCount > 0 && (
+                      <span className="font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/30">
+                        {criticalImpactCount} Critical Impact
+                      </span>
+                    )}
                     {silentReversals.length > 0 && (
                       <span className="font-semibold text-rose-600 dark:text-rose-400">
                         {silentReversals.length} silent {silentReversals.length === 1 ? 'contradiction' : 'contradictions'}
@@ -681,7 +692,6 @@ export default function Home() {
                         {explicitUpdates.length} explicit {explicitUpdates.length === 1 ? 'update' : 'updates'}
                       </span>
                     )}
-                    {/* Change 1: Consistent terms as passive summary only — no individual cards */}
                     {consistentCount > 0 && (
                       <span className="text-[var(--color-text-muted)]">
                         · {consistentCount} consistent
@@ -689,11 +699,11 @@ export default function Home() {
                     )}
                   </div>
                   <span className="text-[11px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">
-                    Verbatim Grounded
+                    Ranked by Policy Impact
                   </span>
                 </div>
 
-                {/* Render most relevant findings first */}
+                {/* Render findings sorted by highest policy impact first */}
                 <div className="space-y-4">
                   {displayedFindings.map((comp) => (
                     <PolicyFindingCard
@@ -704,6 +714,11 @@ export default function Home() {
                       reasoning={comp.reasoning}
                       claimA={comp.claimA}
                       claimB={comp.claimB}
+                      impactLevel={comp.impactLevel}
+                      impactScore={comp.impactScore}
+                      impactCategory={comp.impactCategory}
+                      impactSummary={comp.impactSummary}
+                      priorityRank={comp.priorityRank}
                       onReview={handleReviewAction}
                       latestReviewAction={comp.latestReviewAction}
                     />
@@ -720,7 +735,7 @@ export default function Home() {
                     >
                       <span>
                         {showAllFindings
-                          ? 'Show Top Relevant Findings Only'
+                          ? 'Show Top Impact Findings Only'
                           : `View ${actionable.length - INITIAL_VISIBLE_COUNT} More Finding${actionable.length - INITIAL_VISIBLE_COUNT !== 1 ? 's' : ''}`}
                       </span>
                       {showAllFindings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}

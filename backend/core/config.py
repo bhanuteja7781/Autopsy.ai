@@ -22,8 +22,8 @@ class Settings(BaseModel):
     GOOGLE_SEARCH_API_KEY: str = os.getenv("GOOGLE_SEARCH_API_KEY", "")
     GOOGLE_SEARCH_CX: str = os.getenv("GOOGLE_SEARCH_CX", "")
 
-    # Dual Co-Operating Models
-    EXTRACTOR_MODEL: str = os.getenv("EXTRACTOR_MODEL", "gemini-3.5-flash-lite")
+    # Dual Co-Operating Models (Model 1: Gemini Extraction, Model 2: OpenRouter Reasoning)
+    EXTRACTOR_MODEL: str = os.getenv("EXTRACTOR_MODEL", "gemini-3.6-flash")
     REASONER_MODEL: str = os.getenv("REASONER_MODEL", "openai/gpt-4o-mini")
 
     # Scoring Weights for the policy drift report

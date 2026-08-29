@@ -21,10 +21,14 @@ REASONING_SYSTEM_PROMPT = """You are a forensic policy analyst comparing two off
 
 Claim A is strictly the EARLIER official release. Claim B is strictly the LATER official release. Analyze how Claim B alters, modifies, or silently shifts the operative terms established in Claim A.
 
-Classify their relationship and return ONLY a JSON object:
+Classify their relationship, assess the substantive impact of the change on citizens/affected parties, and return ONLY a JSON object:
 {
   "verdict": "explicit_update" | "silent_contradiction" | "insufficient_evidence",
   "confidence": 0.0-1.0,
+  "impact_level": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+  "impact_score": 0.0-1.0,
+  "impact_category": "Eligibility & Exclusion" | "Financial & Penalties" | "Rights & Entitlements" | "Coverage & Scope" | "Procedural & Compliance",
+  "impact_summary": "<One concise sentence on the concrete legal, economic, or behavioral impact on beneficiaries/citizens>",
   "reasoning": "<forensic explanation — see required format below>"
 }
 
@@ -33,12 +37,12 @@ Verdict definitions:
 - silent_contradiction: the claims differ in substance but the later source gives NO indication anything changed — the prior rule is silently overwritten.
 - insufficient_evidence: the excerpts are too ambiguous, trivial, or unrelated to classify confidently.
 
-CRITICAL SUBSTANTIVE DRIFT RULES:
-- Discard trivial procedural differences (e.g., date of bill passage vs. date of presidential assent, gazette volume numbers, printing press locations).
-- Focus EXCLUSIVELY on changes to rights, obligations, exemptions, eligibility cutoffs, or behavioral rules.
-- If the claims only differ in procedural publication dates with no change to the actual rule, return verdict "insufficient_evidence" with confidence 0.0.
-
-DO NOT use verdict 'consistent' — pairs with >90% text similarity are pre-filtered upstream and never reach you.
+CRITICAL SUBSTANTIVE POLICY IMPACT SCORING RULES:
+Assess the real-world impact of the policy change on affected citizens, businesses, or beneficiaries:
+- CRITICAL (impact_score 0.85-1.00): Direct loss or revocation of core statutory benefits, exclusion of major citizen/farmer populations (e.g., landholding limits excluding millions), introduction of heavy financial penalties/fines (e.g., late linking fee), revocation of unlimited or free tiers, or criminal/statutory liabilities.
+- HIGH (impact_score 0.70-0.84): Substantial reduction in payout amounts, significant restriction of eligibility criteria, strict new mandatory compliance deadlines with forfeiture of rights/benefits.
+- MEDIUM (impact_score 0.40-0.69): Process modifications, operational/documentation updates, coverage category reclassifications without total benefit loss.
+- LOW (impact_score 0.00-0.39): Minor procedural timeline adjustments, administrative gazette rewordings, or low-stakes clarifications.
 
 MANDATORY REASONING FORMAT — your `reasoning` field MUST follow all 3 parts, in order, in a single paragraph:
 1. THE SHIFT: State the exact number, date, eligibility term, or access rule that changed between Claim A and Claim B. Quote specific figures or phrases from both claims.
@@ -88,6 +92,11 @@ class ComparisonResult:
     reasoning: str
     requires_human_review: bool
     reasoner_model_version: str = REASONER_MODEL_VERSION
+    impact_level: str = "HIGH"
+    impact_score: float = 0.80
+    impact_category: str = "Eligibility & Exclusion"
+    impact_summary: str = ""
+    priority_rank: float = 0.80
 
 
 class ConfidenceCalibrator:
@@ -253,14 +262,54 @@ class DriftReasoningEngine:
 
         calibrated = self.calibrator.calibrate(raw_confidence)
 
+        # ── Parse and calibrate Policy Impact ──────────────────────────────
+        raw_impact_level = str(parsed.get("impact_level", "")).strip().upper()
+        if raw_impact_level not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
+            if verdict == "silent_contradiction":
+                raw_impact_level = "CRITICAL" if calibrated >= 0.75 else "HIGH"
+            elif verdict == "explicit_update":
+                raw_impact_level = "HIGH" if calibrated >= 0.70 else "MEDIUM"
+            else:
+                raw_impact_level = "LOW"
+        impact_level = raw_impact_level
+
+        try:
+            raw_impact_score = float(parsed.get("impact_score", 0.0))
+            if 0.0 <= raw_impact_score <= 1.0:
+                impact_score = round(raw_impact_score, 3)
+            else:
+                impact_score = {"CRITICAL": 0.95, "HIGH": 0.75, "MEDIUM": 0.50, "LOW": 0.25}.get(impact_level, 0.70)
+        except (ValueError, TypeError):
+            impact_score = {"CRITICAL": 0.95, "HIGH": 0.75, "MEDIUM": 0.50, "LOW": 0.25}.get(impact_level, 0.70)
+
+        raw_category = str(parsed.get("impact_category", "")).strip()
+        allowed_categories = {
+            "Eligibility & Exclusion", "Financial & Penalties", "Rights & Entitlements",
+            "Coverage & Scope", "Procedural & Compliance"
+        }
+        impact_category = raw_category if raw_category in allowed_categories else "Eligibility & Exclusion"
+
+        impact_summary = str(parsed.get("impact_summary", "")).strip()
+        if not impact_summary and reasoning:
+            # Fallback extract the impact sentence from reasoning if available
+            impact_summary = reasoning.split(".")[-1].strip() or reasoning
+
+        # ── Calculate Composite Policy Priority Rank ───────────────────────
+        # Formula: 60% Impact Severity + 25% Verdict Weight (Silent Contradictions prioritized) + 15% Confidence
+        verdict_weight = 1.0 if verdict == "silent_contradiction" else (0.70 if verdict == "explicit_update" else 0.20)
+        priority_rank = round((impact_score * 0.60) + (verdict_weight * 0.25) + (calibrated * 0.15), 3)
+
         requires_review = calibrated < HUMAN_REVIEW_CONFIDENCE_THRESHOLD or (
             verdict == "silent_contradiction"
             and calibrated < SILENT_CONTRADICTION_MIN_SURFACE_CONFIDENCE
         )
 
         logger.info(
-            "Comparison result: verdict=%s calibrated_conf=%.3f requires_review=%s",
+            "Comparison result: verdict=%s impact=%s (score=%.2f) priority=%.3f conf=%.3f review=%s",
             verdict,
+            impact_level,
+            impact_score,
+            priority_rank,
             calibrated,
             requires_review,
         )
@@ -275,6 +324,11 @@ class DriftReasoningEngine:
             reasoning=reasoning,
             requires_human_review=requires_review,
             reasoner_model_version=settings.REASONER_MODEL,
+            impact_level=impact_level,
+            impact_score=impact_score,
+            impact_category=impact_category,
+            impact_summary=impact_summary,
+            priority_rank=priority_rank,
         )
 
     @staticmethod
@@ -353,8 +407,9 @@ class DriftReasoningEngine:
                 """
                 INSERT OR REPLACE INTO comparisons
                 (id, entity_id, claim_a_id, claim_b_id, verdict, confidence, reasoning,
-                 requires_human_review, reasoner_model_version, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 requires_human_review, reasoner_model_version, created_at,
+                 impact_level, impact_score, impact_category, impact_summary, priority_rank)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     res.id,
@@ -367,6 +422,11 @@ class DriftReasoningEngine:
                     1 if res.requires_human_review else 0,
                     res.reasoner_model_version,
                     datetime.datetime.utcnow().isoformat(),
+                    res.impact_level,
+                    res.impact_score,
+                    res.impact_category,
+                    res.impact_summary,
+                    res.priority_rank,
                 ),
             )
 

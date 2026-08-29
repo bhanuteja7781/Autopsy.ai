@@ -120,9 +120,26 @@ class Database:
             requires_human_review INTEGER NOT NULL DEFAULT 0,
             reasoner_model_version TEXT NOT NULL,
             created_at TEXT NOT NULL,
+            impact_level TEXT DEFAULT 'HIGH',
+            impact_score REAL DEFAULT 0.8,
+            impact_category TEXT DEFAULT 'Eligibility & Exclusion',
+            impact_summary TEXT DEFAULT '',
+            priority_rank REAL DEFAULT 0.8,
             UNIQUE(claim_a_id, claim_b_id)
         )
         """)
+        # Run migrations for comparisons table if new impact columns are missing
+        for col_name, col_type in [
+            ("impact_level", "TEXT DEFAULT 'HIGH'"),
+            ("impact_score", "REAL DEFAULT 0.8"),
+            ("impact_category", "TEXT DEFAULT 'Eligibility & Exclusion'"),
+            ("impact_summary", "TEXT DEFAULT ''"),
+            ("priority_rank", "REAL DEFAULT 0.8"),
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE comparisons ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
 
         # 7. Review Actions
         cur.execute("""

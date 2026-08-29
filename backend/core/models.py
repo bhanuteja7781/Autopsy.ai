@@ -96,6 +96,11 @@ class ComparisonModel(BaseModel):
     requires_human_review: bool
     reasoner_model_version: str
     created_at: str
+    impact_level: Optional[str] = "HIGH"
+    impact_score: Optional[float] = 0.80
+    impact_category: Optional[str] = "Eligibility & Exclusion"
+    impact_summary: Optional[str] = ""
+    priority_rank: Optional[float] = 0.80
     claim_a: Optional[Dict[str, Any]] = None
     claim_b: Optional[Dict[str, Any]] = None
 

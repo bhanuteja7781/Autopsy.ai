@@ -19,6 +19,10 @@ export interface ClaimComparisonCardProps {
   reasoning: string;
   claimA: ClaimSide;
   claimB: ClaimSide;
+  impactLevel?: string;
+  impactScore?: number;
+  impactCategory?: string;
+  impactSummary?: string;
   onReview?: (comparisonId: string, action: "confirmed" | "dismissed") => void;
   latestReviewAction?: string | null;
 }
@@ -29,6 +33,32 @@ const VERDICT_STYLES: Record<Verdict, { label: string; pillClass: string }> = {
   silent_contradiction: { label: "Silent Contradiction", pillClass: "bg-red-950/90 text-red-300 border border-red-500/50 font-bold" },
   insufficient_evidence: { label: "Insufficient Evidence", pillClass: "bg-amber-950/80 text-amber-300 border border-amber-500/40" },
 };
+
+function getImpactBadge(level: string = "HIGH", score: number = 0.8) {
+  const l = (level || "HIGH").toUpperCase();
+  if (l === "CRITICAL") {
+    return {
+      label: "CRITICAL",
+      className: "bg-rose-950/90 text-rose-300 border border-rose-500/60 font-bold",
+    };
+  }
+  if (l === "HIGH") {
+    return {
+      label: "HIGH IMPACT",
+      className: "bg-amber-950/80 text-amber-300 border border-amber-500/50",
+    };
+  }
+  if (l === "MEDIUM") {
+    return {
+      label: "MED IMPACT",
+      className: "bg-blue-950/70 text-blue-300 border border-blue-500/40",
+    };
+  }
+  return {
+    label: "LOW",
+    className: "bg-slate-800 text-slate-400 border border-slate-700",
+  };
+}
 
 function ConfidencePill({ confidence }: { confidence: number }) {
   const [showInfo, setShowInfo] = useState(false);
@@ -98,11 +128,16 @@ export default function ClaimComparisonCard({
   reasoning,
   claimA,
   claimB,
+  impactLevel = "HIGH",
+  impactScore = 0.80,
+  impactCategory,
+  impactSummary,
   onReview,
   latestReviewAction,
 }: ClaimComparisonCardProps) {
   const [expanded, setExpanded] = useState(false);
   const verdictStyle = VERDICT_STYLES[verdict] || VERDICT_STYLES.consistent;
+  const impactStyle = getImpactBadge(impactLevel, impactScore);
 
   return (
     <div className={`rounded-xl border transition-all ${
@@ -116,11 +151,19 @@ export default function ClaimComparisonCard({
         onClick={() => setExpanded((e) => !e)}
         className="w-full flex items-center justify-between px-4 py-3 text-left gap-3"
       >
-        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
+          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full whitespace-nowrap ${impactStyle.className}`}>
+            {impactStyle.label}
+          </span>
           <span className={`text-[11px] font-medium px-2.5 py-0.5 rounded-full whitespace-nowrap ${verdictStyle.pillClass}`}>
             {verdictStyle.label}
           </span>
           <ConfidencePill confidence={confidence} />
+          {impactCategory && (
+            <span className="hidden md:inline-block text-[10px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800">
+              {impactCategory}
+            </span>
+          )}
           <span className="text-xs text-slate-300 truncate font-sans">{reasoning}</span>
         </div>
 
@@ -139,6 +182,12 @@ export default function ClaimComparisonCard({
       {/* Expanded evidence view — progressive disclosure */}
       {expanded && (
         <div className="border-t border-slate-800/80 px-4 py-4 space-y-4 bg-[#080B12]/80 animate-in fade-in duration-150">
+          {impactSummary && (
+            <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 flex items-start gap-2">
+              <span className="font-bold uppercase tracking-wider text-[10px] text-amber-400 shrink-0 mt-0.5">Impact:</span>
+              <span>{impactSummary}</span>
+            </div>
+          )}
           <div className="flex flex-col md:flex-row gap-4">
             <ExcerptColumn label="Earlier Statement" claim={claimA} isEarlier={true} />
             <div className="hidden md:block w-px bg-slate-800 self-stretch" />

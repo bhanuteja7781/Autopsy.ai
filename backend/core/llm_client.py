@@ -11,23 +11,21 @@ from backend.core.config import settings
 logger = logging.getLogger("llm_client")
 
 # ── Available & Verified Gemini Models (ordered: working first) ────────────────
-# gemini-3.5-flash-lite: VERIFIED WORKING (separate per-model quota)
-# gemini-3.6-flash: quota exhausted at 20 req/day — kept as fallback
 GEMINI_EXTRACTION_MODELS = [
-    "gemini-3.5-flash-lite",          # verified working, separate quota, fast JSON
+    "gemini-3.6-flash",               # primary high-speed extraction model
+    "gemini-3.5-flash-lite",          # fast lightweight extraction
+    "gemini-3.5-flash",               # larger context model
     "gemini-3.1-flash-lite",          # fallback lite
-    "gemini-3.5-flash",               # larger, separate quota
-    "gemini-flash-lite-latest",       # alias
-    "gemini-3.6-flash",               # 20 req/day free tier (may be exhausted)
     "gemini-flash-latest",            # alias
+    "gemini-flash-lite-latest",       # alias
 ]
 
 GEMINI_REASONING_MODELS = [
-    "gemini-3.5-flash-lite",          # verified working
-    "gemini-3.1-flash-lite",          # fallback
-    "gemini-3.5-flash",               # larger
-    "gemini-flash-lite-latest",       # alias
-    "gemini-3.6-flash",               # may be exhausted
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
 ]
 
 # ── OpenRouter Models (ordered: paid/verified first, free last) ──────────────

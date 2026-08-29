@@ -36,7 +36,8 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
   onCreateEntity,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'silent_contradiction' | 'explicit_update' | 'consistent'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'critical' | 'silent_contradiction' | 'explicit_update' | 'consistent'>('all');
+  const [sortBy, setSortBy] = useState<'impact' | 'confidence' | 'verdict'>('impact');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newEntityName, setNewEntityName] = useState('');
   const [newEntityType, setNewEntityType] = useState('government_scheme');
@@ -45,10 +46,35 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
     e.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredComparisons = comparisons.filter((c) => {
-    if (activeFilter === 'all') return true;
-    return c.verdict === activeFilter;
-  });
+  const criticalCount = comparisons.filter(
+    (c) => (c.impactLevel || '').toUpperCase() === 'CRITICAL' || (c.impactScore || 0) >= 0.85
+  ).length;
+  const silentCount = comparisons.filter((c) => c.verdict === 'silent_contradiction').length;
+  const updateCount = comparisons.filter((c) => c.verdict === 'explicit_update').length;
+  const consistentCount = comparisons.filter((c) => c.verdict === 'consistent').length;
+
+  const filteredComparisons = comparisons
+    .filter((c) => {
+      if (activeFilter === 'all') return true;
+      if (activeFilter === 'critical') {
+        return (c.impactLevel || '').toUpperCase() === 'CRITICAL' || (c.impactScore || 0) >= 0.85;
+      }
+      return c.verdict === activeFilter;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'impact') {
+        const scoreA = a.priorityRank || (a.impactScore || 0.7);
+        const scoreB = b.priorityRank || (b.impactScore || 0.7);
+        return scoreB - scoreA;
+      }
+      if (sortBy === 'confidence') {
+        return (b.confidence || 0) - (a.confidence || 0);
+      }
+      // Sort by verdict: silent contradictions first
+      if (a.verdict === 'silent_contradiction' && b.verdict !== 'silent_contradiction') return -1;
+      if (b.verdict === 'silent_contradiction' && a.verdict !== 'silent_contradiction') return 1;
+      return (b.confidence || 0) - (a.confidence || 0);
+    });
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,10 +84,6 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
       setIsModalOpen(false);
     }
   };
-
-  const silentCount = comparisons.filter((c) => c.verdict === 'silent_contradiction').length;
-  const updateCount = comparisons.filter((c) => c.verdict === 'explicit_update').length;
-  const consistentCount = comparisons.filter((c) => c.verdict === 'consistent').length;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -144,7 +166,7 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Tracking public communications, guidelines, and press releases over time.
+                  Tracking public notices, guidelines, and gazettes prioritized by real-world policy impact.
                 </p>
               </div>
 
@@ -158,9 +180,9 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
               </button>
             </div>
 
-            {/* Filter Tabs */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-xs">
-              <div className="flex items-center gap-1.5 bg-[#0B0F19] p-1 rounded-xl border border-slate-800">
+            {/* Filter & Sort Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5 bg-[#0B0F19] p-1 rounded-xl border border-slate-800">
                 <button
                   onClick={() => setActiveFilter('all')}
                   className={`px-3 py-1 rounded-lg font-medium transition-all ${
@@ -169,6 +191,16 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
                 >
                   All ({comparisons.length})
                 </button>
+                {criticalCount > 0 && (
+                  <button
+                    onClick={() => setActiveFilter('critical')}
+                    className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                      activeFilter === 'critical' ? 'bg-rose-600 text-white font-semibold' : 'text-rose-400 hover:text-rose-200'
+                    }`}
+                  >
+                    Critical Impact ({criticalCount})
+                  </button>
+                )}
                 <button
                   onClick={() => setActiveFilter('silent_contradiction')}
                   className={`px-3 py-1 rounded-lg font-medium transition-all ${
@@ -195,9 +227,18 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
                 </button>
               </div>
 
-              <span className="text-[11px] text-slate-400 font-mono">
-                Pairwise O(n) Comparisons
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 uppercase font-mono">Sort:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e: any) => setSortBy(e.target.value)}
+                  className="bg-[#080B12] border border-slate-800 rounded-lg px-2 py-1 text-slate-300 text-[11px] font-mono focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="impact">Highest Policy Impact</option>
+                  <option value="confidence">Confidence Score</option>
+                  <option value="verdict">Contradiction Type</option>
+                </select>
+              </div>
             </div>
 
             {/* Comparisons List with ClaimComparisonCard */}
@@ -220,6 +261,10 @@ export const InvestigationWorkspace: React.FC<InvestigationWorkspaceProps> = ({
                     reasoning={comp.reasoning}
                     claimA={comp.claimA}
                     claimB={comp.claimB}
+                    impactLevel={comp.impactLevel}
+                    impactScore={comp.impactScore}
+                    impactCategory={comp.impactCategory}
+                    impactSummary={comp.impactSummary}
                     onReview={onReviewComparison}
                     latestReviewAction={comp.latestReviewAction}
                   />

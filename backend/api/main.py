@@ -677,6 +677,7 @@ def get_entity_comparisons(entity_id: str):
     cur.execute("""
         SELECT c.id, c.entity_id, c.claim_a_id, c.claim_b_id, c.verdict, c.confidence, c.reasoning,
                c.requires_human_review, c.reasoner_model_version, c.created_at,
+               c.impact_level, c.impact_score, c.impact_category, c.impact_summary, c.priority_rank,
                ca.raw_excerpt as claim_a_excerpt, ca.claim_type as claim_a_type,
                da.published_at as claim_a_date, da.source_url as claim_a_url,
                cb.raw_excerpt as claim_b_excerpt, cb.claim_type as claim_b_type,
@@ -688,7 +689,7 @@ def get_entity_comparisons(entity_id: str):
         JOIN claims cb ON c.claim_b_id = cb.id
         JOIN documents db ON cb.document_id = db.id
         WHERE c.entity_id = ?
-        ORDER BY c.created_at DESC
+        ORDER BY COALESCE(c.priority_rank, 0.8) DESC, COALESCE(c.impact_score, 0.8) DESC, c.confidence DESC
     """, (entity_id,))
     rows = cur.fetchall()
     conn.close()
@@ -703,6 +704,11 @@ def get_entity_comparisons(entity_id: str):
             "reasoning": r["reasoning"],
             "requiresHumanReview": bool(r["requires_human_review"]),
             "latestReviewAction": r["latest_review_action"],
+            "impactLevel": r["impact_level"] or "HIGH",
+            "impactScore": float(r["impact_score"]) if r["impact_score"] is not None else 0.80,
+            "impactCategory": r["impact_category"] or "Eligibility & Exclusion",
+            "impactSummary": r["impact_summary"] or "",
+            "priorityRank": float(r["priority_rank"]) if r["priority_rank"] is not None else 0.80,
             "claimA": {
                 "excerpt": r["claim_a_excerpt"],
                 "claimType": r["claim_a_type"],
@@ -758,6 +764,7 @@ def get_review_queue():
     cur = conn.cursor()
     cur.execute("""
         SELECT c.id, c.entity_id, c.verdict, c.confidence, c.reasoning, e.name as entity_name,
+               c.impact_level, c.impact_score, c.impact_category, c.impact_summary, c.priority_rank,
                ca.raw_excerpt as claim_a_excerpt, da.published_at as claim_a_date, da.source_url as claim_a_url,
                cb.raw_excerpt as claim_b_excerpt, db.published_at as claim_b_date, db.source_url as claim_b_url
         FROM comparisons c
@@ -767,7 +774,7 @@ def get_review_queue():
         JOIN claims cb ON c.claim_b_id = cb.id
         JOIN documents db ON cb.document_id = db.id
         WHERE c.requires_human_review = 1
-        ORDER BY c.confidence ASC
+        ORDER BY COALESCE(c.priority_rank, 0.8) DESC, c.confidence ASC
     """)
     rows = cur.fetchall()
     conn.close()
@@ -779,6 +786,11 @@ def get_review_queue():
             "verdict": r["verdict"],
             "confidence": float(r["confidence"]),
             "reasoning": r["reasoning"],
+            "impactLevel": r["impact_level"] or "HIGH",
+            "impactScore": float(r["impact_score"]) if r["impact_score"] is not None else 0.80,
+            "impactCategory": r["impact_category"] or "Eligibility & Exclusion",
+            "impactSummary": r["impact_summary"] or "",
+            "priorityRank": float(r["priority_rank"]) if r["priority_rank"] is not None else 0.80,
             "claimA": {"excerpt": r["claim_a_excerpt"], "publishedAt": r["claim_a_date"], "sourceUrl": r["claim_a_url"]},
             "claimB": {"excerpt": r["claim_b_excerpt"], "publishedAt": r["claim_b_date"], "sourceUrl": r["claim_b_url"]},
         }
