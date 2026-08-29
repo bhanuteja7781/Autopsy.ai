@@ -47,10 +47,14 @@ CRITICAL SUBSTANTIVE POLICY IMPACT SCORING RULES (RANK BY CITIZEN SEVERITY):
 - MEDIUM (impact_score 0.45-0.74): Operational process modifications, registration authority reassignments, documentation changes without group exclusions.
 - LOW (impact_score 0.00-0.44): Minor procedural timeline adjustments, administrative gazette rewordings, or low-stakes phrasing clarifications.
 
+CRITICAL STATUTORY ENABLING & CROSS-REFERENCE RULE:
+- If Claim B is merely an administrative application process, registration portal rule, or procedural enactment for the exact same group established in Claim A (especially when Claim B explicitly cites Claim A or says "a person referred to in the proviso to clause (b)..."), Claim B DOES NOT contradict Claim A. You MUST classify this as consistent enabling procedure by returning verdict "insufficient_evidence" with confidence 0.0.
+- A TRUE policy contradiction or drift occurs when substantive rights, definitions, or eligibility terms shift (e.g. secular citizenship vs faith-based exemption excluding Muslim minorities, Sri Lankan Tamils, Myanmar Rohingya; or universal NRC 1971 legacy proof vs CAA 2014 non-Muslim exemption).
+
 MANDATORY REASONING FORMAT — your `reasoning` field MUST follow all 3 parts, in order, in a single paragraph:
 1. THE SHIFT: State the exact number, date, eligibility term, or access rule that changed between Claim A and Claim B. Quote specific figures or phrases from both claims.
 2. THE MECHANISM: State explicitly whether the later document cited, referenced, or acknowledged the change from the earlier rule — or whether it silently introduced a different rule with no cross-reference.
-3. IMPACT SUMMARY: One sentence on what this concretely means for the affected beneficiary, user, or party.
+3. IMPACT SUMMARY: One sentence on what this concretely means for the affected beneficiary, user, or party (explicitly naming affected or excluded communities like Muslim minorities, Sri Lankan Tamils, etc., when applicable).
 
 NEVER output generic phrases like 'statements appear broadly compatible' or 'high semantic overlap.' Every reasoning must reference specific clause language from both excerpts."""
 
@@ -407,16 +411,16 @@ class DriftReasoningEngine:
     def _is_duplicate_pair(
         claim_a: ClaimForComparison, claim_b: ClaimForComparison
     ) -> bool:
-        """Returns True if the pair is duplicate noise and should be dropped."""
+        """Returns True if the pair is duplicate noise or an enabling execution clause and should be dropped."""
         import difflib
+        import re
 
-        # Near-identical text guard (>90% character similarity)
-        ratio = difflib.SequenceMatcher(
-            None,
-            claim_a.raw_excerpt.lower().strip(),
-            claim_b.raw_excerpt.lower().strip(),
-        ).ratio()
-        if ratio >= 0.90:
+        text_a = claim_a.raw_excerpt.lower().strip()
+        text_b = claim_b.raw_excerpt.lower().strip()
+
+        # Near-identical text guard (>85% character similarity)
+        ratio = difflib.SequenceMatcher(None, text_a, text_b).ratio()
+        if ratio >= 0.85:
             logger.debug(
                 "No-op: %.0f%% text similarity for claim_a=%s claim_b=%s — dropped.",
                 ratio * 100,
@@ -424,6 +428,26 @@ class DriftReasoningEngine:
                 claim_b.claim_id,
             )
             return True
+
+        # Statutory enabling clause guard: if Claim B explicitly cites Claim A's clause/proviso
+        # (e.g. "person referred to in the proviso to clause (b)", "grant a certificate to person referred to in")
+        # to grant administrative certificates or registration, it is enacting Claim A rather than contradicting it.
+        enacting_patterns = [
+            r"referred to in (the\s+)?proviso to clause",
+            r"referred to in (the\s+)?clause \([a-z0-9]+\)",
+            r"referred to in (the\s+)?sub-section \([a-z0-9]+\)",
+            r"application made in this behalf.*grant a certificate",
+            r"grant a certificate of.*to a person referred to in",
+        ]
+        for pat in enacting_patterns:
+            if re.search(pat, text_b, re.IGNORECASE) or re.search(pat, text_a, re.IGNORECASE):
+                logger.debug(
+                    "Procedural enactment clause detected for claim_a=%s claim_b=%s — dropped.",
+                    claim_a.claim_id,
+                    claim_b.claim_id,
+                )
+                return True
+
         return False
 
     async def run_pipeline_for_entity(

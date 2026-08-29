@@ -33,32 +33,37 @@ class FetchedDocument:
     fetch_status: str  # 'success' | 'failed'
 
 
-def build_targeted_search_query(entity_name: str) -> str:
+def build_targeted_search_queries(entity_name: str) -> list[str]:
     clean_name = entity_name.strip()
-
-    # Common Indian legal/policy acronym mapping
-    acronym_map = {
-        "CAA": "Citizenship Amendment Act notification gazette India",
-        "UAPA": "Unlawful Activities Prevention Act amendments gazette India",
-        "RTI": "Right to Information Act rules amendments India",
-        "TADA": "Terrorist and Disruptive Activities Prevention Act rules",
-        "AFSPA": "Armed Forces Special Powers Act notifications India",
-        "GST": "GST Council rate amendments notifications India",
-        "ARTICLE 370": "Article 370 abrogation gazette notification Jammu Kashmir",
-        "FCRA": "Foreign Contribution Regulation Act rules amendments India",
-        "POCSO": "Protection of Children from Sexual Offences Act amendments",
-        "PMLA": "Prevention of Money Laundering Act notification India",
-    }
-
     key_upper = clean_name.upper()
-    if key_upper in acronym_map:
-        return acronym_map[key_upper]
 
-    # Generic fallback for any other short policy code or topic
-    if len(clean_name) <= 5 or re.match(r'^(act|bill|law|rule|article|section)', clean_name, re.I):
-        return f"{clean_name} gazette notification government policy rules India"
+    # Domain specific multi-perspective queries (historical baseline vs amendments/exclusions)
+    if any(k in key_upper for k in ["NRC", "CAA", "CITIZENSHIP"]):
+        return [
+            "Assam NRC legacy data 1971 proof citizenship act 1955 rules",
+            "CAA Citizenship Amendment Act 2019 rules non-Muslim minority exclusion Muslim Rohingya Tamil 2024 gazette",
+        ]
+    if "PM-KISAN" in key_upper or "KISAN" in key_upper:
+        return [
+            "PM-KISAN initial scheme guidelines small marginal farmers 2 hectares 2019",
+            "PM-KISAN scheme extension all landholder farmers exclusion criteria revised",
+        ]
+    if "PAN" in key_upper or "AADHAAR" in key_upper:
+        return [
+            "PAN Aadhaar linking original deadline income tax rules notification",
+            "PAN inoperative Section 234H late fee penalty 1000 notification",
+        ]
+    if "AYUSHMAN" in key_upper or "PMJAY" in key_upper or "PM-JAY" in key_upper:
+        return [
+            "Ayushman Bharat PM-JAY SECC 2011 eligibility guidelines original",
+            "Ayushman Bharat PM-JAY 70 plus senior citizens coverage expansion guidelines",
+        ]
 
-    return f"{clean_name} official policy rules gazette notification"
+    # Generic fallback: Retrieve baseline foundation + contemporary revisions
+    return [
+        f"{clean_name} original guidelines official policy notification baseline rules India",
+        f"{clean_name} amendment revision gazette notification eligibility exclusion rules India",
+    ]
 
 
 class RetrievalAgent:
@@ -94,9 +99,8 @@ class RetrievalAgent:
             entity_id,
         )
 
-        # Dynamic targeted query expansion for Indian statutes, gazettes, and policy notifications
-        targeted_query = build_targeted_search_query(entity_name)
-        queries = [targeted_query]
+        # Dynamic targeted multi-perspective query expansion
+        queries = build_targeted_search_queries(entity_name)
         results = await self._execute_live_web_search(
             entity_id, entity_name, queries
         )
@@ -131,48 +135,45 @@ class RetrievalAgent:
     async def _execute_live_web_search(
         self, entity_id: str, entity_name: str, search_queries: list[str]
     ) -> list[FetchedDocument]:
-        """Runs two live Tavily searches using the Gemini-expanded query."""
+        """Runs parallel live Tavily searches across baseline and contemporary amendment queries."""
         if not settings.TAVILY_API_KEY:
             raise RuntimeError("TAVILY_API_KEY is not configured.")
 
         docs: list[FetchedDocument] = []
-        timed_out = False
-        for search_query in search_queries:
+        seen_urls: set[str] = set()
+
+        async def _fetch_query(query: str) -> list[FetchedDocument]:
             try:
                 resp = await self.http.post(
                     "https://api.tavily.com/search",
                     json={
                         "api_key": settings.TAVILY_API_KEY,
-                        "query": search_query,
+                        "query": query,
                         "search_depth": "advanced",
                         "include_raw_content": True,
-                        "max_results": 15,
+                        "max_results": 10,
                         "exclude_domains": ["youtube.com", "facebook.com", "x.com", "twitter.com", "instagram.com"]
                     },
                     timeout=15.0,
                 )
-                logger.info("[Tavily] Response status: %d", resp.status_code)
                 if resp.status_code != 200:
-                    logger.warning("Tavily query failed with HTTP %d: %s", resp.status_code, resp.text[:500])
-                    continue
+                    logger.warning("Tavily query failed with HTTP %d: %s", resp.status_code, resp.text[:300])
+                    return []
 
                 data = resp.json()
+                local_docs: list[FetchedDocument] = []
                 for item in data.get("results", []):
                     raw_text = item.get("raw_content") or ""
                     clean = self._clean_text(raw_text) if raw_text else ""
-                    # Fallback to Tavily's pre-extracted content if raw HTML cleaning yielded too little
                     if len(clean) < 100 and item.get("content"):
                         clean = self._clean_text(item.get("content", "")) or item.get("content", "")
 
                     if len(clean) >= 60:
                         clean = clean[:3000].strip()
                         url = item.get("url", "")
-                        # Deduplicate by URL
-                        if any(d.source_url == url for d in docs):
-                            continue
                         chash = hashlib.sha256(clean.encode("utf-8")).hexdigest()
                         pub_date = item.get("published_date") or item.get("published_at")
-                        docs.append(
+                        local_docs.append(
                             FetchedDocument(
                                 id=str(uuid.uuid4()),
                                 source_url=url,
@@ -186,13 +187,17 @@ class RetrievalAgent:
                                 fetch_status="success",
                             )
                         )
-            except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
-                logger.warning("Tavily query timed out after 10 seconds: %s", exc)
-                timed_out = True
-                continue
+                return local_docs
             except Exception as exc:
-                logger.warning("Tavily query failed: %s", exc)
-                continue
+                logger.warning("Tavily search exception for query '%s': %s", query, exc)
+                return []
+
+        query_results = await asyncio.gather(*[_fetch_query(q) for q in search_queries])
+        for q_docs in query_results:
+            for d in q_docs:
+                if d.source_url not in seen_urls:
+                    seen_urls.add(d.source_url)
+                    docs.append(d)
 
         if not docs:
             if timed_out:
