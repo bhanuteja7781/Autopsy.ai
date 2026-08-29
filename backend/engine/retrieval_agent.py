@@ -34,35 +34,15 @@ class FetchedDocument:
 
 
 def build_targeted_search_queries(entity_name: str) -> list[str]:
+    """
+    Constructs clean, dynamic search queries tailored strictly to the user's entity.
+    Retrieves baseline statutory foundation as well as subsequent amendments/rules.
+    Zero hardcoded policy names or acronym assumptions.
+    """
     clean_name = entity_name.strip()
-    key_upper = clean_name.upper()
-
-    # Domain specific multi-perspective queries (historical baseline vs amendments/exclusions)
-    if any(k in key_upper for k in ["NRC", "CAA", "CITIZENSHIP"]):
-        return [
-            "Assam NRC legacy data 1971 proof citizenship act 1955 rules",
-            "CAA Citizenship Amendment Act 2019 rules non-Muslim minority exclusion Muslim Rohingya Tamil 2024 gazette",
-        ]
-    if "PM-KISAN" in key_upper or "KISAN" in key_upper:
-        return [
-            "PM-KISAN initial scheme guidelines small marginal farmers 2 hectares 2019",
-            "PM-KISAN scheme extension all landholder farmers exclusion criteria revised",
-        ]
-    if "PAN" in key_upper or "AADHAAR" in key_upper:
-        return [
-            "PAN Aadhaar linking original deadline income tax rules notification",
-            "PAN inoperative Section 234H late fee penalty 1000 notification",
-        ]
-    if "AYUSHMAN" in key_upper or "PMJAY" in key_upper or "PM-JAY" in key_upper:
-        return [
-            "Ayushman Bharat PM-JAY SECC 2011 eligibility guidelines original",
-            "Ayushman Bharat PM-JAY 70 plus senior citizens coverage expansion guidelines",
-        ]
-
-    # Generic fallback: Retrieve baseline foundation + contemporary revisions
     return [
-        f"{clean_name} original guidelines official policy notification baseline rules India",
-        f"{clean_name} amendment revision gazette notification eligibility exclusion rules India",
+        f"{clean_name} official policy rules guidelines gazette notification",
+        f"{clean_name} official rules amendment revision updates gazette",
     ]
 
 

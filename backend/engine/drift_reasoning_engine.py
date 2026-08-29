@@ -39,22 +39,22 @@ Verdict definitions:
 - insufficient_evidence: the excerpts are too ambiguous, trivial, or unrelated to classify confidently.
 
 CRITICAL SUBSTANTIVE POLICY IMPACT SCORING RULES (RANK BY CITIZEN SEVERITY):
-- CRITICAL (impact_score 0.95-1.00):
-  * Core Citizenship, Nationality, and Constitutional Rights: Granting, denying, or altering citizenship eligibility based on religion, country of origin, ancestry, or cut-off dates (e.g. selective inclusion of 6 religious groups while excluding Muslim minorities, Sri Lankan Tamils, Myanmar Rohingya; NRC legacy data proof shifts; statelessness or classification as 'illegal migrant').
-  * Loss of fundamental welfare survival support or creation of detention/statutory liabilities.
-  * Heavy financial penalties/fines or statutory identity cancellation (e.g. PAN/Aadhaar inoperative).
-- HIGH (impact_score 0.75-0.94): Substantial reduction in payout amounts, large-scale population exclusions (e.g. land limits excluding millions of farmers), strict mandatory compliance deadlines with forfeiture of benefits.
-- MEDIUM (impact_score 0.45-0.74): Operational process modifications, registration authority reassignments, documentation changes without group exclusions.
-- LOW (impact_score 0.00-0.44): Minor procedural timeline adjustments, administrative gazette rewordings, or low-stakes phrasing clarifications.
+- CRITICAL (impact_score 0.85-1.00):
+  * Core Constitutional, Civil, or Nationality Rights: Total exclusion, revocation of legal status/citizenship, or selective denial of rights to demographic/minority groups; creation of statelessness or statutory liability/detention.
+  * Direct termination or total revocation of essential safety-net welfare entitlements.
+  * Heavy statutory financial fines/penalties or legal identity invalidation.
+- HIGH (impact_score 0.70-0.84): Substantial reduction in payout amounts, large-scale population exclusions (e.g. land/income eligibility caps), strict mandatory compliance deadlines with forfeiture of benefits.
+- MEDIUM (impact_score 0.40-0.69): Operational process modifications, registration authority reassignments, documentation changes without total group exclusions.
+- LOW (impact_score 0.00-0.39): Minor procedural timeline adjustments, administrative gazette rewordings, or low-stakes phrasing clarifications.
 
 CRITICAL STATUTORY ENABLING & CROSS-REFERENCE RULE:
-- If Claim B is merely an administrative application process, registration portal rule, or procedural enactment for the exact same group established in Claim A (especially when Claim B explicitly cites Claim A or says "a person referred to in the proviso to clause (b)..."), Claim B DOES NOT contradict Claim A. You MUST classify this as consistent enabling procedure by returning verdict "insufficient_evidence" with confidence 0.0.
-- A TRUE policy contradiction or drift occurs when substantive rights, definitions, or eligibility terms shift (e.g. secular citizenship vs faith-based exemption excluding Muslim minorities, Sri Lankan Tamils, Myanmar Rohingya; or universal NRC 1971 legacy proof vs CAA 2014 non-Muslim exemption).
+- If Claim B is merely an administrative procedure, registration mechanism, or procedural enactment for the exact same group established in Claim A (especially when Claim B explicitly references Claim A's clause or section), Claim B does NOT contradict Claim A. Classify this as non-contradictory implementation by returning verdict "insufficient_evidence" with confidence 0.0.
+- A TRUE policy contradiction or drift occurs when substantive rights, eligibility criteria, exclusion terms, cutoffs, or benefit amounts shift between the earlier and later sources.
 
 MANDATORY REASONING FORMAT — your `reasoning` field MUST follow all 3 parts, in order, in a single paragraph:
 1. THE SHIFT: State the exact number, date, eligibility term, or access rule that changed between Claim A and Claim B. Quote specific figures or phrases from both claims.
 2. THE MECHANISM: State explicitly whether the later document cited, referenced, or acknowledged the change from the earlier rule — or whether it silently introduced a different rule with no cross-reference.
-3. IMPACT SUMMARY: One sentence on what this concretely means for the affected beneficiary, user, or party (explicitly naming affected or excluded communities like Muslim minorities, Sri Lankan Tamils, etc., when applicable).
+3. IMPACT SUMMARY: One sentence on what this concretely means for the affected beneficiary, citizen, or party (explicitly naming affected or excluded communities/classes when applicable).
 
 NEVER output generic phrases like 'statements appear broadly compatible' or 'high semantic overlap.' Every reasoning must reference specific clause language from both excerpts."""
 
@@ -288,7 +288,7 @@ class DriftReasoningEngine:
 
         calibrated = self.calibrator.calibrate(raw_confidence)
 
-        # ── Parse LLM Policy Impact Baseline ──────────────────────────────
+        # ── Parse LLM Policy Impact Assessment ──────────────────────────────
         raw_impact_level = str(parsed.get("impact_level", "")).strip().upper()
         if raw_impact_level not in {"CRITICAL", "HIGH", "MEDIUM", "LOW"}:
             if verdict == "silent_contradiction":
@@ -297,73 +297,23 @@ class DriftReasoningEngine:
                 raw_impact_level = "HIGH" if calibrated >= 0.70 else "MEDIUM"
             else:
                 raw_impact_level = "LOW"
+        impact_level = raw_impact_level
 
         try:
             raw_impact_score = float(parsed.get("impact_score", 0.0))
-            if not 0.0 <= raw_impact_score <= 1.0:
-                raw_impact_score = {"CRITICAL": 0.95, "HIGH": 0.78, "MEDIUM": 0.50, "LOW": 0.25}.get(raw_impact_level, 0.70)
+            if 0.0 <= raw_impact_score <= 1.0:
+                impact_score = round(raw_impact_score, 3)
+            else:
+                impact_score = {"CRITICAL": 0.95, "HIGH": 0.78, "MEDIUM": 0.50, "LOW": 0.25}.get(impact_level, 0.70)
         except (ValueError, TypeError):
-            raw_impact_score = {"CRITICAL": 0.95, "HIGH": 0.78, "MEDIUM": 0.50, "LOW": 0.25}.get(raw_impact_level, 0.70)
+            impact_score = {"CRITICAL": 0.95, "HIGH": 0.78, "MEDIUM": 0.50, "LOW": 0.25}.get(impact_level, 0.70)
 
         raw_category = str(parsed.get("impact_category", "")).strip()
-
-        # ── Domain-Specific Substantive Impact Calibrator & Elevation ──────────
-        # High-stakes statutory civil rights, citizenship exclusions, and minority classifications
-        # MUST mathematically dominate rankings over trivial administrative shifts.
-        text_corpus = f"{claim_a.raw_excerpt} {claim_b.raw_excerpt} {reasoning}".lower()
-
-        # Domain 1: Fundamental Citizenship, Nationality, Demographic/Minority Community Exclusions
-        citizenship_terms = [
-            "citizenship", "nationality", "illegal migrant", "naturalisation", "naturalization",
-            "nrc", "caa", "deportation", "stateless", "detention", "passport", "foreigner",
-            "foreigners tribunal", "legacy data", "passport (entry into india) act", "citizenship act"
-        ]
-        minority_terms = [
-            "muslim", "islam", "hindu", "sikh", "buddhist", "jain", "parsi", "christian",
-            "tamil", "sri lanka", "rohingya", "myanmar", "burma", "afghanistan", "bangladesh",
-            "pakistan", "refugee", "persecuted", "minority", "minorities", "exemption criteria"
-        ]
-        exclusion_terms = [
-            "excluded", "exclusion", "ineligible", "disqualified", "restricted", "denied",
-            "proviso", "december 31, 2014", "31st day of december", "treated as illegal"
-        ]
-
-        has_citizenship = any(t in text_corpus for t in citizenship_terms)
-        has_minority = any(t in text_corpus for t in minority_terms)
-        has_exclusion = any(t in text_corpus for t in exclusion_terms)
-
-        # Domain 2: Financial Penalties, Fines, ID Invalidation (e.g. PAN, Aadhaar)
-        penalty_terms = ["penalty", "fine", "late fee", "rs. 1000", "fee of rs", "inoperative", "forfeited", "cancelled", "prosecution"]
-        has_penalty = any(t in text_corpus for t in penalty_terms)
-
-        # Domain 3: Broad Citizen Welfare Population Exclusion (e.g. PM-KISAN, PM-JAY)
-        broad_welfare_terms = ["land holding", "landholder", "2 hectares", "all farmer", "exclusion criteria", "income tax payee", "pensioner"]
-        has_welfare_exclusion = any(t in text_corpus for t in broad_welfare_terms)
-
-        if (has_citizenship and (has_minority or has_exclusion)) or (has_minority and has_exclusion):
-            impact_level = "CRITICAL"
-            impact_score = max(raw_impact_score, 0.98)
-            impact_category = "Rights & Entitlements"
-        elif has_citizenship:
-            impact_level = "CRITICAL"
-            impact_score = max(raw_impact_score, 0.94)
-            impact_category = "Rights & Entitlements"
-        elif has_penalty:
-            impact_level = "CRITICAL"
-            impact_score = max(raw_impact_score, 0.92)
-            impact_category = "Financial & Penalties"
-        elif has_welfare_exclusion:
-            impact_level = "CRITICAL" if verdict == "silent_contradiction" else "HIGH"
-            impact_score = max(raw_impact_score, 0.88)
-            impact_category = "Eligibility & Exclusion"
-        else:
-            impact_level = raw_impact_level
-            impact_score = round(raw_impact_score, 3)
-            valid_categories = {
-                "Rights & Entitlements", "Eligibility & Exclusion", "Financial & Penalties",
-                "Coverage & Scope", "Procedural & Compliance"
-            }
-            impact_category = raw_category if raw_category in valid_categories else "Eligibility & Exclusion"
+        valid_categories = {
+            "Rights & Entitlements", "Eligibility & Exclusion", "Financial & Penalties",
+            "Coverage & Scope", "Procedural & Compliance"
+        }
+        impact_category = raw_category if raw_category in valid_categories else "Eligibility & Exclusion"
 
         impact_summary = str(parsed.get("impact_summary", "")).strip()
         if not impact_summary and reasoning:
@@ -411,9 +361,8 @@ class DriftReasoningEngine:
     def _is_duplicate_pair(
         claim_a: ClaimForComparison, claim_b: ClaimForComparison
     ) -> bool:
-        """Returns True if the pair is duplicate noise or an enabling execution clause and should be dropped."""
+        """Returns True if the pair is duplicate noise and should be dropped."""
         import difflib
-        import re
 
         text_a = claim_a.raw_excerpt.lower().strip()
         text_b = claim_b.raw_excerpt.lower().strip()
@@ -428,25 +377,6 @@ class DriftReasoningEngine:
                 claim_b.claim_id,
             )
             return True
-
-        # Statutory enabling clause guard: if Claim B explicitly cites Claim A's clause/proviso
-        # (e.g. "person referred to in the proviso to clause (b)", "grant a certificate to person referred to in")
-        # to grant administrative certificates or registration, it is enacting Claim A rather than contradicting it.
-        enacting_patterns = [
-            r"referred to in (the\s+)?proviso to clause",
-            r"referred to in (the\s+)?clause \([a-z0-9]+\)",
-            r"referred to in (the\s+)?sub-section \([a-z0-9]+\)",
-            r"application made in this behalf.*grant a certificate",
-            r"grant a certificate of.*to a person referred to in",
-        ]
-        for pat in enacting_patterns:
-            if re.search(pat, text_b, re.IGNORECASE) or re.search(pat, text_a, re.IGNORECASE):
-                logger.debug(
-                    "Procedural enactment clause detected for claim_a=%s claim_b=%s — dropped.",
-                    claim_a.claim_id,
-                    claim_b.claim_id,
-                )
-                return True
 
         return False
 
